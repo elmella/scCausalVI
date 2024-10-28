@@ -1,10 +1,10 @@
 from typing import List, Optional, Union
 import numpy as np
 from scvi.train import TrainingPlan, TrainRunner
-from scCausalVAE.data.dataloaders.data_splitting import scCausalVAEDataSplitter
+from scCausalVI.data.dataloaders.data_splitting import scCausalVIDataSplitter
 
 
-class scCausalVAETrainingMixin:
+class scCausalVITrainingMixin:
     """General methods for contrastive learning."""
 
     def train(
@@ -20,7 +20,7 @@ class scCausalVAETrainingMixin:
             **trainer_kwargs,
     ) -> None:
         """
-        Train a scCausalVAE model.
+        Train a scCausalVI model.
 
         Args:
         ----
@@ -53,7 +53,7 @@ class scCausalVAETrainingMixin:
 
         plan_kwargs = plan_kwargs if isinstance(plan_kwargs, dict) else dict()
 
-        data_splitter = scCausalVAEDataSplitter(
+        data_splitter = scCausalVIDataSplitter(
             self.adata_manager,
             group_indices_list,
             train_size=train_size,

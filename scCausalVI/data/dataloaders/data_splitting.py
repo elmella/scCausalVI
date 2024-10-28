@@ -5,10 +5,10 @@ from typing import List, Optional
 from scvi import settings
 from scvi.dataloaders._data_splitting import validate_data_split
 from scvi.model._utils import parse_use_gpu_arg
-from scCausalVI.data.dataloaders.scCausalVAE_dataloader import scCausalDataLoader
+from scCausalVI.data.dataloaders.scCausalVI_dataloader import scCausalDataLoader
 
 
-class scCausalVAEDataSplitter(pl.LightningDataModule):
+class scCausalVIDataSplitter(pl.LightningDataModule):
     """
     Create scCausalDataLoader for training, validation, and test set.
 

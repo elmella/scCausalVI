@@ -18,13 +18,13 @@ from scvi.model._utils import _init_library_size
 from scvi.model.base import BaseModelClass
 from scvi.distributions import ZeroInflatedNegativeBinomial
 
-from scCausalVAE.model.base.training_mixin import scCausalVAETrainingMixin
-from scCausalVAE.module.scCausalVAE import scCausalVAEModule
+from scCausalVI.model.base.training_mixin import scCausalVITrainingMixin
+from scCausalVI.module.scCausalVI import scCausalVIModule
 
 logger = logging.getLogger(__name__)
 
 
-class scCausalVAEModel(scCausalVAETrainingMixin, BaseModelClass):
+class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
     """
     Model class for scCausalVAE.
     Args:
@@ -74,7 +74,7 @@ class scCausalVAEModel(scCausalVAETrainingMixin, BaseModelClass):
             if gammas is None:
                 gammas = torch.FloatTensor([10 ** x for x in range(-6, 7, 1)])
 
-        self.module = scCausalVAEModule(
+        self.module = scCausalVIModule(
             n_input=self.summary_stats["n_vars"],
             n_conditions=n_conditions,
             control=control,
