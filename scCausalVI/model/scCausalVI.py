@@ -61,7 +61,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             gan_weight: float = 1.0,
     ) -> None:
 
-        super(scCausalVAEModel, self).__init__(adata)
+        super(scCausalVIModel, self).__init__(adata)
         # self.summary_stats from BaseModelClass gives info about anndata dimensions
         # and other tensor info.
         n_batch = self.summary_stats.n_batch
