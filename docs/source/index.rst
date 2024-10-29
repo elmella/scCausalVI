@@ -9,11 +9,18 @@ between treatment effects and cellular states. Key features include support for 
 treatment response analysis, and counterfactual inference, allowing users to explore cellular
 variability and identify treatment-responsive subpopulations.
 
+.. image:: _static/overview.png
+   :alt: Overview
+
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
-   introduction
+
    installation
    tutorial
    api
+
+.. include:: README.md
+   :parser: myst_parser.sphinx_
