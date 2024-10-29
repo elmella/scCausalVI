@@ -11,3 +11,5 @@ seaborn>=0.12.2
 scipy>=1.11.3
 scvi-tools>=0.16.1
 pytorch-lightning>=1.5.10
+sphinx>=1.0.0
+myst-parser>=3.0.1
