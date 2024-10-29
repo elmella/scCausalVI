@@ -18,7 +18,7 @@ release = '0.0.1'
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ['sphinx.ext.autodoc', 'sphinxcontrib.napoleon', 'myst_parser',
+extensions = ['sphinx.ext.autodoc', 'myst_parser',
               'sphinx.ext.napoleon',
               'sphinx_autodoc_typehints']
 
@@ -50,7 +50,6 @@ intersphinx_disabled_domains = ['std']
 templates_path = ['_templates']
 html_static_path = ['_static']
 html_theme = "sphinx_rtd_theme"
-html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 # html_logo = '_static/uniPort.png'
 
 
