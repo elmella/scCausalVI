@@ -14,3 +14,4 @@ pytorch-lightning>=1.5.10
 sphinx>=1.0.0
 myst-parser>=3.0.1
 sphinx_rtd_theme
+sphinx-autodoc-typehints
