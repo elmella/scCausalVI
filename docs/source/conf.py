@@ -50,6 +50,7 @@ intersphinx_disabled_domains = ['std']
 templates_path = ['_templates']
 html_static_path = ['_static']
 html_theme = "sphinx_rtd_theme"
+html_theme_options = dict(navigation_depth=4, logo_only=True)  # Only show the logo
 # html_logo = '_static/uniPort.png'
 
 
