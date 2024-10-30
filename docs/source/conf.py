@@ -19,7 +19,7 @@ release = '0.0.1'
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = ['sphinx.ext.autodoc', 'myst_parser',
-              'sphinx.ext.napoleon',
+              'sphinx.ext.napoleon', 'nbsphinx',
               'sphinx_autodoc_typehints']
 
 templates_path = ['_templates']
