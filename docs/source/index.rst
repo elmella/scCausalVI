@@ -1,5 +1,4 @@
-
-Welcome to scCausalVI's documentation!
+scCausalVI
 ======================================
 scCausalVI is a causality-aware model for analyzing single-cell RNA sequencing
 data, designed to disentangle treatment effects from intrinsic cellular heterogeneity.
