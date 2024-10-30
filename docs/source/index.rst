@@ -17,7 +17,7 @@ variability and identify treatment-responsive subpopulations.
    :maxdepth: 2
    :caption: Contents:
 
-
+   self
    installation
    tutorial
    api

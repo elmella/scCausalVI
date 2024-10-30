@@ -3,4 +3,4 @@ Examples
 
 .. toctree::
 
-   example/index
+   tutorial/index
