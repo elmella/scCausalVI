@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="scCausalVI",
-    version="0.0.2",
+    version="0.0.3",
     author="Shaokun An",
     author_email="shan12@bwh.harvard.edu",
     description="A causality-aware model for disentangling treatment effects at single-cell resolution "
