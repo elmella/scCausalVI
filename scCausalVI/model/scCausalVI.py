@@ -365,6 +365,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
     def get_count_expression(self,
                              adata: Optional[AnnData] = None,
                              indices: Optional[Sequence[int]] = None,
+                             target_batch: Optional[int] = None,
                              batch_size: Optional[int] = None,
                              ):
         adata = self._validate_anndata(adata)
@@ -432,11 +433,17 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
             # Generate expression data
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
+
+            if target_batch is None:
+                target_batch = batch_index
+            else:
+                target_batch = torch.full_like(batch_index, fill_value=target_batch)
+
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
                 self.module.dispersion,
                 latent_tensor,
                 latent_library_tensor,
-                batch_index
+                target_batch,
             )
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
@@ -456,9 +463,10 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                                             condition2int,
                                             source_condition,
                                             target_condition,
-                                            adata=None,
-                                            indices=None,
-                                            batch_size=None,
+                                            target_batch: Optional[int] = None,
+                                            adata: Optional[AnnData] = None,
+                                            indices: Optional[List[int]] = None,
+                                            batch_size: Optional[int] = None,
                                             ):
         if source_condition == target_condition:
             raise ValueError(f"source condition and target condition should be different.")
@@ -573,11 +581,17 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
             # Generate expression data
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
+
+            if target_batch is None:
+                target_batch = batch_index
+            else:
+                target_batch = torch.full_like(batch_index, fill_value=target_batch)
+
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
                 self.module.dispersion,
                 latent_tensor,
                 latent_library_tensor,
-                batch_index
+                target_batch,
             )
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
