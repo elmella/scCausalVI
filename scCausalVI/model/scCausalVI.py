@@ -435,15 +435,15 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
-                target_batch = batch_index
+                target_batch_index = batch_index
             else:
-                target_batch = torch.full_like(batch_index, fill_value=target_batch)
+                target_batch_index = torch.full_like(batch_index, fill_value=target_batch)
 
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
                 self.module.dispersion,
                 latent_tensor,
                 latent_library_tensor,
-                target_batch,
+                target_batch_index,
             )
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
@@ -583,15 +583,15 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
-                target_batch = batch_index
+                target_batch_index = batch_index
             else:
-                target_batch = torch.full_like(batch_index, fill_value=target_batch)
+                target_batch_index = torch.full_like(batch_index, fill_value=target_batch)
 
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
                 self.module.dispersion,
                 latent_tensor,
                 latent_library_tensor,
-                target_batch,
+                target_batch_index,
             )
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
