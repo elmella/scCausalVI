@@ -21,11 +21,13 @@ class scCausalVIModule(BaseModuleClass):
     Args:
     ----
         n_input: Number of input genes.
-        n_batch: Number of batches. If 0, no batch effect correction is performed.
-        n_hidden: Number of nodes per hidden layer.
+        condition2int: Dict mapping condition name (str) -> index (int)
+        control: Control condition in case-control study, containing cells in unperturbed states
+        n_batch: Number of batches. If 1, no batch information incorporated into model/
+        n_hidden: Number of hidden nodes in each layer of neural network.
         n_background_latent: Dimensionality of the background latent space.
-        n_salient_latent: Dimensionality of the salient latent space.
-        n_layers: Number of hidden layers used for encoder and decoder NNs.
+        n_te_latent: Dimensionality of the treatment effect latent space.
+        n_layers: Number of hidden layers of each sub-networks.
         dropout_rate: Dropout rate for neural networks.
         use_observed_lib_size: Use observed library size for RNA as scaling factor in
             mean of conditional distribution.
@@ -36,10 +38,9 @@ class scCausalVIModule(BaseModuleClass):
         use_mmd: Whether to use the maximum mean discrepancy to force background latent
             variables of the control and treatment dataset to follow the same
             distribution.
-        mmd_weight: Weight of the mmd loss so the mmd loss has similar scale as the
-            other loss terms.
-        gammas: Gamma values when `use_mmd` is `True`.
-        treatment_names: Names of each treatment.
+        mmd_weight: Weight of MMD in loss function.
+        norm_weight: Normalization weight in loss function.
+        gammas: Kernel bandwidths for calculating MMD.
     """
 
     def sample(self, *args, **kwargs):
@@ -48,12 +49,12 @@ class scCausalVIModule(BaseModuleClass):
     def __init__(
             self,
             n_input: int,
-            control: str,
             condition2int: dict,
+            control: str,
             n_batch: int,
             n_hidden: int = 128,
             n_background_latent: int = 10,
-            n_salient_latent: int = 10,
+            n_te_latent: int = 10,
             n_layers: int = 1,
             dropout_rate: float = 0.1,
             use_observed_lib_size: bool = True,
@@ -63,7 +64,6 @@ class scCausalVIModule(BaseModuleClass):
             mmd_weight: float = 1.0,
             norm_weight: float = 1.0,
             gammas: Optional[np.ndarray] = None,
-            treatment_names: Optional[List[str]] = None,  # if you want to name each treatment
     ) -> None:
         super(scCausalVIModule, self).__init__()
         self.n_input = n_input
@@ -74,7 +74,7 @@ class scCausalVIModule(BaseModuleClass):
         self.n_batch = n_batch
         self.n_hidden = n_hidden
         self.n_background_latent = n_background_latent
-        self.n_salient_latent = n_salient_latent
+        self.n_te_latent = n_te_latent
         self.n_layers = n_layers
         self.dropout_rate = dropout_rate
         self.latent_distribution = "normal"
@@ -106,8 +106,8 @@ class scCausalVIModule(BaseModuleClass):
 
         cat_list = [n_batch]
 
-        # Background encoder encodes cellular intrinsic heterogeneity
-        # of control data. The input dim equals to the number of genes.
+        # Background encoder encodes cellular baseline states
+        # of control data. Input dim equals to the number of genes.
         self.control_background_encoder = Encoder(
             n_input,
             n_background_latent,
@@ -122,12 +122,10 @@ class scCausalVIModule(BaseModuleClass):
             var_activation=None,
         )
 
-        # If user doesn't provide a treatment_names list, deduce it from condition2int.
-        if treatment_names is None:
-            treatment_names = [k for k in self.condition2int.keys() if k != control]
+        treatment_names = [k for k in self.condition2int.keys() if k != control]
         self.treatment_names = treatment_names
 
-        # Each treatment background encoder encodes the cellular intrinsic heterogeneity of treatment data.
+        # Each treatment_background_encoder encodes baseline states of treated cells without treatment effect
         self.treatment_background_encoders = torch.nn.ModuleDict()
         for tname in self.treatment_names:
             enc = Encoder(
@@ -147,13 +145,13 @@ class scCausalVIModule(BaseModuleClass):
             enc.load_state_dict(self.control_background_encoder.state_dict())
             self.treatment_background_encoders[tname] = enc
 
-        self.treatment_salient_encoders = torch.nn.ModuleDict()
+        self.treatment_te_encoders = torch.nn.ModuleDict()
 
         if len(self.treatment_names) > 0:
-            # Create a reference salient encoder
-            ref_salient = Encoder(
+            # Create a reference treatment effect encoder
+            ref_te = Encoder(
                 n_input=n_background_latent,
-                n_output=n_salient_latent,
+                n_output=n_te_latent,
                 n_cat_list=None,
                 n_layers=n_layers,
                 n_hidden=n_hidden,
@@ -166,12 +164,12 @@ class scCausalVIModule(BaseModuleClass):
             )
 
             # First one is the reference
-            self.treatment_salient_encoders[self.treatment_names[0]] = ref_salient
+            self.treatment_te_encoders[self.treatment_names[0]] = ref_te
             # Others copy from reference
             for tname in self.treatment_names[1:]:
                 enc = Encoder(
                     n_input=n_background_latent,
-                    n_output=n_salient_latent,
+                    n_output=n_te_latent,
                     n_cat_list=None,
                     n_layers=n_layers,
                     n_hidden=n_hidden,
@@ -182,11 +180,11 @@ class scCausalVIModule(BaseModuleClass):
                     use_layer_norm=False,
                     var_activation=None,
                 )
-                enc.load_state_dict(ref_salient.state_dict())
-                self.treatment_salient_encoders[tname] = enc
+                enc.load_state_dict(ref_te.state_dict())
+                self.treatment_te_encoders[tname] = enc
 
-        # Attention layer
-        self.attention = torch.nn.Linear(self.n_salient_latent, 1)
+        # Attention layer to capture differential treatment effect patterns
+        self.attention = torch.nn.Linear(self.n_te_latent, 1)
 
         # Library size encoder.
         self.l_encoder = Encoder(
@@ -202,7 +200,7 @@ class scCausalVIModule(BaseModuleClass):
             var_activation=None,
         )
         # Decoder from latent variable to distribution parameters in data space.
-        n_total_latent = n_background_latent + n_salient_latent
+        n_total_latent = n_background_latent + n_te_latent
         self.decoder = DecoderSCVI(
             n_total_latent,
             n_input,
@@ -227,10 +225,11 @@ class scCausalVIModule(BaseModuleClass):
         )
         return local_library_log_means, local_library_log_vars
 
-    def _get_inference_input(self,
-                             tensors,
-                             **kwargs
-                             ) -> Union[Dict[str, list[str]], Dict[str, Any]]:
+    def _get_inference_input(
+            self,
+            tensors: Dict[str, torch.Tensor],
+            **kwargs
+    ) -> Union[Dict[str, list[str]], Dict[str, Any]]:
 
         x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
         batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
@@ -250,7 +249,7 @@ class scCausalVIModule(BaseModuleClass):
         """
         If src = 'control', use self.control_background_encoder.
         If src = 'treatment', for each unique treat label in `condition_label`,
-        use that label's background & salient encoders.
+        use that label's background & treatment_effect encoders.
         """
 
         n_cells = x.shape[0]
@@ -260,9 +259,9 @@ class scCausalVIModule(BaseModuleClass):
         qbg_m = torch.zeros((n_cells, self.n_background_latent), device=x.device)
         qbg_v = torch.zeros((n_cells, self.n_background_latent), device=x.device)
 
-        z_t = torch.zeros((n_cells, self.n_salient_latent), device=x.device)
-        qt_m = torch.zeros((n_cells, self.n_salient_latent), device=x.device)
-        qt_v = torch.zeros((n_cells, self.n_salient_latent), device=x.device)
+        z_t = torch.zeros((n_cells, self.n_te_latent), device=x.device)
+        qt_m = torch.zeros((n_cells, self.n_te_latent), device=x.device)
+        qt_v = torch.zeros((n_cells, self.n_te_latent), device=x.device)
 
         library = torch.zeros((n_cells, 1), device=x.device)
         ql_m = None
@@ -282,18 +281,18 @@ class scCausalVIModule(BaseModuleClass):
                 ql_v[:] = qlv
                 library[:] = lib_
 
-            # background
+            # Background latent factors
             bg_m, bg_v_, bg_z = self.control_background_encoder(x_, batch_index)
             qbg_m[:] = bg_m
             qbg_v[:] = bg_v_
             z_bg[:] = bg_z
-            # z_t remains 0 for control.
+            # Treatment effect latent factors remain 0 of control data.
         else:
             # Multiple distinct treatment labels
             unique_treats = condition_label.unique()
             for t_lbl in unique_treats:
                 if t_lbl.item() == self.condition2int[self.control]:
-                    continue  # skip control label if present by chance.
+                    raise ValueError('Control label found in treatment labels')  # skip control label if present by chance.
 
                 # Invert condition2int to find the name for t_lbl
                 treat_name = None
@@ -302,7 +301,7 @@ class scCausalVIModule(BaseModuleClass):
                         treat_name = k
                         break
                 if treat_name is None:
-                    continue
+                    raise ValueError(f'Treatment label {t_lbl} not found in condition2int')
 
                 mask = (condition_label == t_lbl).squeeze()
                 x_sub = x_[mask]
@@ -323,8 +322,8 @@ class scCausalVIModule(BaseModuleClass):
                 qbg_v[mask] = bg_v_
                 z_bg[mask] = bg_z
 
-                # salient
-                s_enc = self.treatment_salient_encoders[treat_name]
+                # Treatment-specific module
+                s_enc = self.treatment_te_encoders[treat_name]
                 tm, tv, zt = s_enc(bg_z)
                 qt_m[mask] = tm
                 qt_v[mask] = tv
@@ -345,13 +344,13 @@ class scCausalVIModule(BaseModuleClass):
     @auto_move_data
     def inference(
             self,
-            x,
-            condition_label,
-            batch_index,
+            x: torch.Tensor,
+            condition_label: torch.Tensor,
+            batch_index: torch.Tensor,
             n_samples: int = 1,
     ) -> Dict[str, Dict[str, torch.Tensor]]:
 
-        # Inference of control data and treatment data
+        # Inference of data
         ctrl_mask = (condition_label == self.condition2int[self.control]).squeeze()
 
         x_control = x[ctrl_mask]
@@ -371,14 +370,15 @@ class scCausalVIModule(BaseModuleClass):
 
         return {"control": inference_control, "treatment": inference_treatment}
 
-    def _get_generative_input(self,
-                              tensors,
-                              inference_outputs,
-                              **kwargs,
-                              ):
+    def _get_generative_input(
+            self,
+            tensors: torch.Tensor,
+            inference_outputs: Dict[str, Dict[str, torch.Tensor]],
+            **kwargs,
+    ):
         """
-                Merges the control/treatment in original order.
-                """
+        Merges the control/treatment in original order.
+        """
         x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
         batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS. BATCH_KEY]
         condition_label = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
@@ -387,18 +387,18 @@ class scCausalVIModule(BaseModuleClass):
         n_cells = x.shape[0]
 
         z_bg_merged = torch.zeros((n_cells, self.n_background_latent), device=x.device)
-        z_t_merged = torch.zeros((n_cells, self.n_salient_latent), device=x.device)
+        z_t_merged = torch.zeros((n_cells, self.n_te_latent), device=x.device)
         library_merged = torch.zeros((n_cells, 1), device=x.device)
 
         ctrl_inference = inference_outputs['control']
         treatment_inference = inference_outputs['treatment']
 
-        # fill control portion
+        # Fill control portion
         z_bg_merged[ctrl_mask] = ctrl_inference['z_bg']
         z_t_merged[ctrl_mask] = ctrl_inference['z_t']
         library_merged[ctrl_mask] = ctrl_inference['library']
 
-        # fill treatment portion
+        # Fill treatment portion
         z_bg_merged[~ctrl_mask] = treatment_inference['z_bg']
         z_t_merged[~ctrl_mask] = treatment_inference['z_t']
         library_merged[~ctrl_mask] = treatment_inference['library']
@@ -532,7 +532,7 @@ class scCausalVIModule(BaseModuleClass):
     ) -> LossOutput:
         """
         The entire batch is in `tensors`.
-        We separate out control vs. treat, compute the relevant losses, and combine.
+        We separate  control vs. treat, compute the relevant losses, and combine.
         """
         x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
         batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
@@ -597,13 +597,13 @@ class scCausalVIModule(BaseModuleClass):
             z_bg_treatment_all = trt_inference["z_bg"]
             cond_treat = condition_label[~ctrl_mask]
 
-            # Compute MMD loss between control data and each treatment data, to
-            # align each treated samples with the control population
+            # Compute MMD loss between distributions of background latent space for control and
+            # each treatment data, to align each baseline states of treated samples with the control population
             unique_treats = cond_treat.unique()
             for t_lbl in unique_treats:
                 treat_submask = (cond_treat == t_lbl).squeeze()
                 z_bg_t_sub = z_bg_treatment_all[treat_submask]
-                # MMD between all control cells and the subset of treatment cells for this label
+                # MMD between all control cells and the subset of treatment cells of this label
                 loss_mmd += self.mmd_loss(z_bg_control, z_bg_t_sub)
 
             loss_mmd *= self.mmd_weight

@@ -30,20 +30,21 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
     """
     Model class for scCausalVI.
     Args:
-            adata: AnnData object with count data.
-            condition2int: Dict mapping condition name (str) -> index (int)
-            control: Name of control condition in case-control study, denoting cells without treatment effects.
-            n_hidden: Number of hidden nodes in each layer.
-            n_background_latent: Dimensionality of background latent space.
-            n_salient_latent: Dimensionality of salient latent space.
-            n_layers: Number of hidden layers.
-            dropout_rate: Dropout rate for the network.
-            use_observed_lib_size: Flag to use observed library size.
-            disentangle: Whether to disentangle latent spaces.
-            use_mmd: Flag to use maximum mean discrepancy.
-            mmd_weight: Weight for the MMD loss.
-            norm_weight: Normalization weight.
-            gammas: Kernel bandwidths for MMD.
+    -----
+        adata: AnnData object with count data.
+        condition2int: Dict mapping condition name (str) -> index (int)
+        control: Control condition in case-control study, containing cells in unperturbed states
+        n_hidden: Number of hidden nodes in each layer of neural network.
+        n_background_latent: Dimensionality of background latent space.
+        n_te_latent: Dimensionality of treatment effect latent space.
+        n_layers: Number of hidden layers of each sub-networks.
+        dropout_rate: Dropout rate for the network.
+        use_observed_lib_size: Whether to use the observed library size.
+        use_mmd: Whether to use Maximum Mean Discrepancy (MMD) to align background latent representations
+        across conditions.
+        mmd_weight: Weight of MMD in loss function.
+        norm_weight: Normalization weight in loss function.
+        gammas: Kernel bandwidths for calculating MMD.
     """
 
     def __init__(
@@ -53,11 +54,10 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             control: str,
             n_hidden: int = 128,
             n_background_latent: int = 10,
-            n_salient_latent: int = 10,
+            n_te_latent: int = 10,
             n_layers: int = 2,
             dropout_rate: float = 0.1,
             use_observed_lib_size: bool = True,
-            disentangle: bool = False,
             use_mmd: bool = True,
             mmd_weight: float = 1.0,
             norm_weight: float = 1.0,
@@ -87,7 +87,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             n_batch=n_batch,
             n_hidden=n_hidden,
             n_background_latent=n_background_latent,
-            n_salient_latent=n_salient_latent,
+            n_te_latent=n_te_latent,
             n_layers=n_layers,
             dropout_rate=dropout_rate,
             use_observed_lib_size=use_observed_lib_size,
@@ -125,7 +125,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
         Args:
             adata: AnnData object with .layers[layer] attribute containing count data.
-            layer: Key for `.layers` or `.raw` where counts are stored.
+            layer: Key for `.layers` or `.raw` where count data are stored.
             batch_key: Key for batch information in `adata.obs`.
             condition_key: Key for condition information in `adata.obs`.
             size_factor_key: Key for size factor information in `adata.obs`.
@@ -163,17 +163,18 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             batch_size: Optional[int] = None,
     ) -> tuple[ndarray, ndarray]:
         """
-        Return the background and treatment effect latent representations for each cell based on their condition labels.
+        Compute background and treatment effect latent representations for each cell based on their condition labels.
 
         Args:
         ----
         adata: AnnData object. If `None`, defaults to the AnnData object used to initialize the model.
         indices: Indices of cells in adata to use. If `None`, all cells are used.
-        give_mean: Give mean of distribution or sample from it.
+        give_mean: Bool. If True, give mean of distribution insteading of sampling from it.
         batch_size: Mini-batch size for data loading into model. Defaults to `scvi.settings.batch_size`.
         Returns
         -------
-            A tuple of two numpy arrays with shape `(n_cells, n_latent)`.
+            A tuple of two numpy arrays with shape `(n_cells, n_latent)` for background and
+            treatment effect latent representations.
         """
         adata = self._validate_anndata(adata)
         data_loader = self._make_data_loader(
@@ -209,7 +210,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                 batch_sub = batch_index[mask]
 
                 if lbl.item() == control_label_idx:
-                    # Control path
+                    # Control path to get background latent factors
                     src = "control"
                     outputs = self.module._generic_inference(
                         x=x_sub, batch_index=batch_sub, src=src, condition_label=label_index[mask],
@@ -217,12 +218,12 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     z_bg_label = outputs["z_bg"]
                     chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
                     bg_holder[mask] = chosen_bg.detach().cpu()
-                    # Salient remains zero in control
+                    # Treatment effect latent factors remain zero in control condition
                 else:
-                    # Treatment path
+                    # Treatment path to get background latent factors
                     treat_name = label_to_name.get(lbl.item(), None)
                     if treat_name is None:
-                        continue  # skip if unknown
+                        raise ValueError(f"Unknown condition label: {lbl.item()}")
                     src = "treatment"
                     outputs = self.module._generic_inference(
                         x=x_sub, batch_index=batch_sub, src=src, condition_label=label_index[mask]
@@ -254,17 +255,20 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             batch_size: Optional[int] = None,
     ) -> tuple[ndarray, ndarray]:
         """
-        Calculate the cross-condition background or treatment effect latent representation for input data.
+        Compute latent representations for cross-condition prediction.
+        For cells from source_condition, computes their latent representations as if they were
+        under target_condition. For all other cells, computes latent representations under
+        their original conditions.
 
         Args:
         ----
-        source_condition: String denoting source condition.
-        target_condition: String denoting target condition.
-        adata: AnnData object to be used. If `None`, defaults to the AnnData object in model to compute latent
-        representation.
-        indices: Indices of cells in adata to use. If `None`, all cells are used.
-        give_mean: Give mean of distribution or sample from it.
-        batch_size: Mini-batch size for data loading into model. Defaults to `scvi.settings.batch_size`.
+        source_condition: Name of source condition from which to select cells for cross-condition prediction.
+        target_condition: Name of target condition under which to predict expression profiles.
+        adata: AnnData object to use. If None, uses the model's AnnData object.
+        indices: Indices of cells in adata to use. If None, uses all cells.
+        give_mean: If True, returns the mean of the distribution instead of sampling
+        batch_size: Minibatch size for data loading. If None, uses scvi.settings.batch_size.
+
         Returns
         -------
             A tuple of ndarrays of background latent factors and treatment effect latent factors with
@@ -318,7 +322,8 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
                     bg_holder[mask] = chosen_bg.detach().cpu()
 
-                    # If the source_condition is control, forcibly apply target_condition's salient
+                    # If the source_condition is control, forcibly apply target_conditions's treatment
+                    # effect encoder
                     if source_label_idx == control_label_idx:
                         if target_label_idx != control_label_idx:
                             # From control -> real treatment
@@ -333,7 +338,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                         else:
                             raise ValueError(f'target_condition should be different from source_condition.')
                     else:
-                        # normal control => no salient
+                        # Normal control => no treatment effects
                         pass
                 else:
                     # Use corresponding treatment_background_encoder for each treated data
@@ -347,10 +352,11 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
                     bg_holder[mask] = chosen_bg.detach().cpu()
 
-                    # If this batch label == source_condition, forcibly apply target's salient
+                    # If this batch label == source_condition, forcibly apply target_condition's
+                    # treatment effect encoder
                     if lbl.item() == source_label_idx:
                         if target_label_idx == control_label_idx:
-                            # From treat -> control => no salient
+                            # From treat -> control => No treatment effect
                             pass
                         else:
                             target_name = label_to_name.get(target_label_idx, None)
@@ -374,20 +380,22 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
         return latent_bg, latent_t
 
     @torch.no_grad()
-    def get_count_expression(self,
-                             adata: Optional[AnnData] = None,
-                             indices: Optional[Sequence[int]] = None,
-                             target_batch: Optional[int] = None,
-                             batch_size: Optional[int] = None,
-                             ) -> AnnData:
+    def get_count_expression(
+            self,
+            adata: Optional[AnnData] = None,
+            indices: Optional[Sequence[int]] = None,
+            target_batch: Optional[int] = None,
+            batch_size: Optional[int] = None,
+    ) -> AnnData:
         """
-        Predict count expression for input data with corresponding condition labels and provided target
-        batch labels (optional).
+        Predict count expression of input data with corresponding condition labels and provided target
+        batch index (optional).
+
         Args:
-            adata: AnnData to predict. If `None`, defaults to the AnnData object in model.
-            indices: Indices of cells in adata to use. If `None`, all cells are used.
-            target_batch: Target batch label. If `None`, defaults to the batch label in adata.
-            batch_size: Number of cells per mini-batch.
+            adata: AnnData to predict. If `None`, use AnnData object in model.
+            indices: Indices of cells in adata to use. If `None`, use all cells.
+            target_batch: Target batch index. If `None`, defaults to keep original batch index of each cell.
+            batch_size: Minibatch size for data loading. If None, uses scvi.settings.batch_size.
 
         Returns:
             AnnData object of count expression prediction.
@@ -435,7 +443,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     latent_bg_tensor[mask] = outputs["z_bg"]
                     latent_library_tensor[mask] = outputs["library"]
                 else:
-                    # Compute prediction of treatment
+                    # Compute prediction of treatment data
                     treat_name = label_to_name.get(lbl.item(), None)
                     if treat_name is None:
                         raise ValueError(f"Unknown treatment: {treat_name} in model.")
@@ -449,14 +457,14 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     latent_t_tensor[mask] = outputs["z_t"]
                     latent_library_tensor[mask] = outputs["library"]
 
-            # Merge background & salient
+            # Merge background & treatement latent representations into one tensor
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
                 # Prediction under the same batch
                 target_batch_index = batch_index
             else:
-                # Prediction under target batch
+                # Prediction under given target batch
                 target_batch_index = torch.full_like(batch_index, fill_value=target_batch)
 
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
@@ -494,21 +502,23 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             batch_size: Optional[int] = None,
     ):
         """
-        Predict cross-condition count expression of target_condition for cells from source_condition.
-        Similar to get_count_expression, but forcibly uses the target_condition's
-        treatment effect encoder if the cell's label matches source_condition (cross-condition).
+        Compute count expression for cross-condition prediction.
+        For cells from source_condition, computes their count data as if they were
+        under target_condition. For all other cells, computes count expression under
+        their original conditions.
 
         Args:
-            source_condition: Source condition name to select cells for cross-condition prediction.
-            target_condition: Target condition name to predict expression profile under the condition.
-            target_batch: Target batch index to predict expression profile under the batch. If `None`, defaults to keep
-            the same batch label in adata. of adata.
-            adata: AnnData to predict. If `None`, defaults to the AnnData object in model.
-            indices: Indices of cells in adata to use. If `None`, all cells are used.
-            batch_size: Number of cells per mini-batch.
+            source_condition: Name of source condition from which to select cells for cross-condition prediction.
+            target_condition: Name of target condition under which to predict expression profiles.
+            target_batch: Index of target batch under which to predict expression profiles.
+            If `None`, defaults to keep the same batch index.
+            adata: AnnData object to use. If `None`, use the model's AnnData object.
+            indices: Indices of cells in adata to use. If `None`, uses all cells.
+            batch_size: Minibatch size for data loading. If None, uses scvi.settings.batch_size.
 
-        Returns:
-        AnnData with predicted cross-condition count expression as well as metadata under targeted settings.
+        Returns
+        -------
+            AnnData with predicted cross-condition count expression as well as metadata of targeted settings.
         """
         if source_condition == target_condition:
             raise ValueError("source condition and target condition should be different.")
@@ -554,7 +564,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                 batch_sub = batch_index[mask]
 
                 if lbl.item() == control_label_idx:
-                    # Compute background latent factors for control data
+                    # Compute background latent factors of control data
                     outputs = self.module._generic_inference(
                         x=x_sub,
                         batch_index=batch_sub,
@@ -564,7 +574,8 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     latent_bg_tensor[mask] = outputs["z_bg"]
                     latent_library_tensor[mask] = outputs["library"]
 
-                    # If source_condition is control => forcibly apply target's salient
+                    # If source_condition is control => forcibly apply target_condition's
+                    # treatment effect encoder
                     if source_label_idx == control_label_idx:
                         if target_label_idx != control_label_idx:
                             target_name = label_to_name.get(target_label_idx, None)
@@ -583,7 +594,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     else:
                         predicted_label[mask] = label_index[mask]  # Keep same condition label index
                 else:
-                    # Compute background latent factors for treated data
+                    # Compute background latent factors of treated data
                     tname = label_to_name.get(lbl.item(), None)
                     if tname is None:
                         raise ValueError(f"Unknown treatment: {tname} in model.")
@@ -595,10 +606,11 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                     )
                     latent_bg_tensor[mask] = outputs["z_bg"]
 
-                    # If this label == source_label_idx => forcibly apply target's salient
+                    # If this label == source_label_idx => forcibly apply target_condition's
+                    # treatment effect encoder
                     if lbl.item() == source_label_idx:
                         if target_label_idx == control_label_idx:
-                            # treat -> control => no salient
+                            # Treated -> control => no treatment effect
                             pass
                         else:
                             target_name = label_to_name.get(target_label_idx, None)
@@ -617,7 +629,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
                     latent_library_tensor[mask] = outputs["library"]
 
-            # Now decode to expression
+            # Decode to expression
             full_latent = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
@@ -636,7 +648,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
 
-            # Sample counts
+            # Sample count data from distribution
             torch.manual_seed(0)
             count_tensor = ZeroInflatedNegativeBinomial(
                 mu=px_rate_tensor, theta=px_r_tensor, zi_logits=px_dropout_tensor
