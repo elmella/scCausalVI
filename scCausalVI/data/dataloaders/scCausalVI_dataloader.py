@@ -1,39 +1,17 @@
 from itertools import cycle
 from typing import List, Optional, Union
+import torch
 
 from scvi.data import AnnDataManager
 from scvi.dataloaders._concat_dataloader import ConcatDataLoader
 
 
-class _scCausalIterator:
-    """
-    Iterator for background and target dataloader pairs as found in the contrastive
-    analysis setting.
-
-    Each iteration of this iterator returns a dictionary with two elements:
-    "background", containing one batch of data from the background dataloader, and
-    "target", containing one batch of data from the target dataloader.
-    """
-
-    def __init__(self, background, target):
-        self.background = iter(background)
-        self.target = iter(target)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        bg_samples = next(self.background)
-        tg_samples = next(self.target)
-        return {"background": bg_samples, "target": tg_samples}
-
-
 class scCausalDataLoader(ConcatDataLoader):
     """
-    Data loader to load data of each condition for scCausalVAE model.
+    A custom loader that still uses one sub-DataLoader per condition, but
+    merges each sub-batch into a single dictionary, ensuring each group
+    contributes exactly `batch_size` samples.
 
-    Each iteration of the data loader returns a dictionary containing background and
-    target data points, indexed by "background" and "target", respectively.
     Args:
     ----
         adata: AnnData object that has been registered via `setup_anndata`.
@@ -72,16 +50,21 @@ class scCausalDataLoader(ConcatDataLoader):
 
     def __iter__(self):
         """
-
-        Iter method for scCausal data loader.
+        Iter method for scCausalVI data loader.
 
         Will iter over the dataloader with the most data while cycling through
-        the data in the other dataloaders.
+        the data in the other dataloaders. Merge
         """
-
         iter_list = [
-            cycle(dl) if dl != self.largest_dl else dl for dl in self.dataloaders
+            cycle(dl) if dl != self.largest_dl else dl
+            for dl in self.dataloaders
         ]
 
-        # return _scCausalIterator(background=iter_list[0], target=iter_list[1])
-        return zip(*iter_list)
+        for batch_tuple in zip(*iter_list):
+            merged_batch = {}
+            all_keys = batch_tuple[0].keys()
+            for key in all_keys:
+                sub_batches = [b[key] for b in batch_tuple]
+                merged_batch[key] = torch.cat(sub_batches, dim=0)
+                
+            yield merged_batch

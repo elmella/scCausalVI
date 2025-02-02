@@ -2,10 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="scCausalVI",
-    version="0.0.3",
+    version='0.0.4',
     author="Shaokun An",
     author_email="shan12@bwh.harvard.edu",
-    description="A causality-aware model for disentangling treatment effects at single-cell resolution "
+    description="A deep causality-aware model for disentangling treatment effects at single-cell resolution "
                 "for perturbational scRNA-seq data",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",

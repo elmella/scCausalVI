@@ -1,10 +1,11 @@
 import logging
-from typing import List, Optional, Sequence, Union, Dict
+from typing import List, Optional, Sequence
 
 import numpy as np
 import torch
 from anndata import AnnData
-from scvi import REGISTRY_KEYS
+from numpy import ndarray
+from .base import SCCAUSALVI_REGISTRY_KEYS
 from scvi.data import AnnDataManager
 from scvi.data.fields import (
     CategoricalJointObsField,
@@ -20,30 +21,36 @@ from scvi.distributions import ZeroInflatedNegativeBinomial
 
 from scCausalVI.model.base.training_mixin import scCausalVITrainingMixin
 from scCausalVI.module.scCausalVI import scCausalVIModule
+from scCausalVI.model.base._utils import _invert_dict
 
 logger = logging.getLogger(__name__)
 
 
 class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
     """
-    Model class for scCausalVAE.
+    Model class for scCausalVI.
     Args:
-        adata: AnnData object with `.raw` attribute containing count data.
-        n_salient_latent: Dimensionality of the salient latent space.
-        n_background_latent: Dimensionality of the background latent space.
-        use_observed_lib_size: Whether to use the observed library size as a covariate.
-        mmd_weight: Weight for the MMD loss.
-        use_mmd: Whether to use the MMD loss.
-        gammas: Weights for the background loss.
+            adata: AnnData object with count data.
+            condition2int: Dict mapping condition name (str) -> index (int)
+            control: Name of control condition in case-control study, denoting cells without treatment effects.
+            n_hidden: Number of hidden nodes in each layer.
+            n_background_latent: Dimensionality of background latent space.
+            n_salient_latent: Dimensionality of salient latent space.
+            n_layers: Number of hidden layers.
+            dropout_rate: Dropout rate for the network.
+            use_observed_lib_size: Flag to use observed library size.
+            disentangle: Whether to disentangle latent spaces.
+            use_mmd: Flag to use maximum mean discrepancy.
+            mmd_weight: Weight for the MMD loss.
+            norm_weight: Normalization weight.
+            gammas: Kernel bandwidths for MMD.
     """
 
     def __init__(
             self,
             adata: AnnData,
-            control: int,
-            n_conditions: int,
-            n_batch: int = 0,
-            n_treat: int = 0,
+            condition2int: dict,
+            control: str,
             n_hidden: int = 128,
             n_background_latent: int = 10,
             n_salient_latent: int = 10,
@@ -51,35 +58,33 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             dropout_rate: float = 0.1,
             use_observed_lib_size: bool = True,
             disentangle: bool = False,
-            bg_gan: bool = True,
             use_mmd: bool = True,
             mmd_weight: float = 1.0,
-            cls_weight: float = 1.0,
-            mse_weight: float = 1.0,
             norm_weight: float = 1.0,
             gammas: Optional[np.ndarray] = None,
-            gan_weight: float = 1.0,
     ) -> None:
 
         super(scCausalVIModel, self).__init__(adata)
-        # self.summary_stats from BaseModelClass gives info about anndata dimensions
-        # and other tensor info.
+
+        # Determine number of batches from summary stats
         n_batch = self.summary_stats.n_batch
+
+        # Initialize library size parameters if not using observed library size
         if use_observed_lib_size:
             library_log_means, library_log_vars = None, None
         else:
             library_log_means, library_log_vars = _init_library_size(self.adata_manager, n_batch)
 
-        if use_mmd:
-            if gammas is None:
-                gammas = torch.FloatTensor([10 ** x for x in range(-6, 7, 1)])
+        # Set default gamma values for MMD if not provided
+        if use_mmd and gammas is None:
+            gammas = torch.FloatTensor([10 ** x for x in range(-6, 7, 1)])
 
+        # Initialize the module with the specified parameters
         self.module = scCausalVIModule(
             n_input=self.summary_stats["n_vars"],
-            n_conditions=n_conditions,
             control=control,
+            condition2int=condition2int,
             n_batch=n_batch,
-            n_treat=n_treat,
             n_hidden=n_hidden,
             n_background_latent=n_background_latent,
             n_salient_latent=n_salient_latent,
@@ -88,21 +93,19 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             use_observed_lib_size=use_observed_lib_size,
             library_log_means=library_log_means,
             library_log_vars=library_log_vars,
-            disentangle=disentangle,
-            # bg_gan=bg_gan,
             use_mmd=use_mmd,
             mmd_weight=mmd_weight,
-            cls_weight=cls_weight,
-            mse_weight=mse_weight,
             norm_weight=norm_weight,
             gammas=gammas,
-            # gan_weight=gan_weight,
         )
-        self._model_summary_string = "scCausalVAE."
-        # Necessary line to get params to be used for saving and loading.
-        self.init_params_ = self._get_init_params(locals())
-        logger.info("The model has been initialized.")
 
+        # Summary string for the model
+        self._model_summary_string = "scCausalVI"
+
+        # Capture initialization parameters for saving/loading
+        self.init_params_ = self._get_init_params(locals())
+
+        logger.info("The model has been initialized.")
 
     @classmethod
     # @setup_anndata_dsp.dedent
@@ -111,20 +114,20 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             adata: AnnData,
             layer: Optional[str] = None,
             batch_key: Optional[str] = None,
-            labels_key: Optional[str] = None,
+            condition_key: Optional[str] = None,
             size_factor_key: Optional[str] = None,
             categorical_covariate_keys: Optional[List[str]] = None,
             continuous_covariate_keys: Optional[List[str]] = None,
             **kwargs,
     ):
         """
-        Set up AnnData instance for scCausalVAE model
+        Set up AnnData instance for scCausalVI model
 
         Args:
-            adata: AnnData object with `.raw` attribute containing count data.
+            adata: AnnData object with .layers[layer] attribute containing count data.
             layer: Key for `.layers` or `.raw` where counts are stored.
             batch_key: Key for batch information in `adata.obs`.
-            labels_key: Key for label information in `adata.obs`.
+            condition_key: Key for condition information in `adata.obs`.
             size_factor_key: Key for size factor information in `adata.obs`.
             categorical_covariate_keys: Keys for categorical covariates in `adata.obs`.
             continuous_covariate_keys: Keys for continuous covariates in `adata.obs`.
@@ -132,17 +135,17 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
-            LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
-            CategoricalObsField(REGISTRY_KEYS.BATCH_KEY, batch_key),
-            CategoricalObsField(REGISTRY_KEYS.LABELS_KEY, labels_key),
+            LayerField(SCCAUSALVI_REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
+            CategoricalObsField(SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY, batch_key),
+            CategoricalObsField(SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY, condition_key),
             NumericalObsField(
-                REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False
+                SCCAUSALVI_REGISTRY_KEYS.SIZE_FACTOR_KEY, size_factor_key, required=False
             ),
             CategoricalJointObsField(
-                REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
+                SCCAUSALVI_REGISTRY_KEYS.CAT_COVS_KEY, categorical_covariate_keys
             ),
             NumericalJointObsField(
-                REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
+                SCCAUSALVI_REGISTRY_KEYS.CONT_COVS_KEY, continuous_covariate_keys
             ),
         ]
         adata_manager = AnnDataManager(
@@ -158,26 +161,20 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             indices: Optional[Sequence[int]] = None,
             give_mean: bool = True,
             batch_size: Optional[int] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[ndarray, ndarray]:
         """
-        Return the background or salient latent representation for each cell.
+        Return the background and treatment effect latent representations for each cell based on their condition labels.
 
         Args:
         ----
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the AnnData object
-            used to initialize the model.
-
+        adata: AnnData object. If `None`, defaults to the AnnData object used to initialize the model.
         indices: Indices of cells in adata to use. If `None`, all cells are used.
-
         give_mean: Give mean of distribution or sample from it.
-
         batch_size: Mini-batch size for data loading into model. Defaults to `scvi.settings.batch_size`.
-
         Returns
         -------
-            A numpy array with shape `(n_cells, n_latent)`.
+            A tuple of two numpy arrays with shape `(n_cells, n_latent)`.
         """
-
         adata = self._validate_anndata(adata)
         data_loader = self._make_data_loader(
             adata=adata,
@@ -190,92 +187,95 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
         latent_bg = []
         latent_t = []
 
+        # Integer label for control condition
+        control_label_idx = self.module.condition2int[self.module.control]
+
+        label_to_name = _invert_dict(self.module.condition2int)
+
         for tensors in data_loader:
-            x = tensors[REGISTRY_KEYS.X_KEY]
-            batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-            label_index = tensors[REGISTRY_KEYS.LABELS_KEY]
+            x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
+            batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
+            label_index = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
+
+            # Placeholders for this mini-batch
+            bg_holder = torch.zeros([x.shape[0], self.module.n_background_latent])
+            t_holder = torch.zeros([x.shape[0], self.module.n_salient_latent])
+
             unique_labels = label_index.unique()
 
-            latent_bg_tensor = torch.zeros([x.shape[0], self.module.n_background_latent])
-            latent_t_tensor = torch.zeros([x.shape[0], self.module.n_salient_latent])
+            for lbl in unique_labels:
+                mask = (label_index == lbl).squeeze().cpu()
+                x_sub = x[mask]
+                batch_sub = batch_index[mask]
 
-            for label in unique_labels:
-                mask = (label_index == label).squeeze().cpu()
-                x_label = x[mask]
-                batch_index_label = batch_index[mask]
-                condition_label_ = label_index[mask]
-
-                if label.item() == self.module.control:  # assuming label 0 corresponds to 'control'
-                    src = 'control'
+                if lbl.item() == control_label_idx:
+                    # Control path
+                    src = "control"
                     outputs = self.module._generic_inference(
-                        x=x_label,
-                        batch_index=batch_index_label,
-                        src=src,
-                        condition_label=condition_label_
+                        x=x_sub, batch_index=batch_sub, src=src, condition_label=label_index[mask],
                     )
-                    z_bg_label = outputs['z_bg']
-                    latent_bg_tensor[mask] = outputs['qbg_m'].detach().cpu() if give_mean else z_bg_label.detach().cpu()
-
+                    z_bg_label = outputs["z_bg"]
+                    chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
+                    bg_holder[mask] = chosen_bg.detach().cpu()
+                    # Salient remains zero in control
                 else:
-                    src = 'treatment'
-                    x_label_ = torch.log(x_label + 1)
+                    # Treatment path
+                    treat_name = label_to_name.get(lbl.item(), None)
+                    if treat_name is None:
+                        continue  # skip if unknown
+                    src = "treatment"
+                    outputs = self.module._generic_inference(
+                        x=x_sub, batch_index=batch_sub, src=src, condition_label=label_index[mask]
+                    )
+                    z_bg_label = outputs["z_bg"]
+                    chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
 
-                    # Specify the treatment encoder for treatment data.
-                    # use (label - 1)-th encoder for treatment label since treatment encoder are labelled from 0
-                    # while treatment labels are labelled from 1 (label 0 implies control data)
-                    treat_index = int(label - 1)
-                    bg_encoder = self.module.treatment_background_encoder[treat_index]
-                    salient_encoder = self.module.treatment_salient_encoder[treat_index]
-                    qbg_m_label, qbg_v_label, z_bg_label = bg_encoder(x_label_, batch_index_label)
-                    qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                    # z_t_label = z_t_label*self.module.scaling_factor
-                    attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                    z_t_label = attention_weights * z_t_label
-                    latent_bg_tensor[mask] = qbg_m_label.detach().cpu() if give_mean else z_bg_label.detach().cpu()
-                    latent_t_tensor[mask] = qt_m_label.detach().cpu() if give_mean else z_t_label.detach().cpu()
+                    z_t_label = outputs["z_t"]
+                    chosen_t = outputs["qt_m"] if give_mean else z_t_label
 
-            latent_bg.append(latent_bg_tensor)
-            latent_t.append(latent_t_tensor)
+                    bg_holder[mask] = chosen_bg.detach().cpu()
+                    t_holder[mask] = chosen_t.detach().cpu()
+
+            latent_bg.append(bg_holder)
+            latent_t.append(t_holder)
 
         latent_bg = torch.cat(latent_bg, dim=0).numpy()
         latent_t = torch.cat(latent_t, dim=0).numpy()
-
         return latent_bg, latent_t
 
     @torch.no_grad()
-    def get_latent_representation_counterfactual(
+    def get_latent_representation_cross_condition(
             self,
-            condition2int: Dict,
             source_condition: str,
             target_condition: str,
             adata: Optional[AnnData] = None,
             indices: Optional[Sequence[int]] = None,
             give_mean: bool = True,
             batch_size: Optional[int] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[ndarray, ndarray]:
         """
-        Return the background or salient latent representation for each cell.
+        Calculate the cross-condition background or treatment effect latent representation for input data.
 
         Args:
         ----
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`, defaults to the AnnData object
-            used to initialize the model.
-
+        source_condition: String denoting source condition.
+        target_condition: String denoting target condition.
+        adata: AnnData object to be used. If `None`, defaults to the AnnData object in model to compute latent
+        representation.
         indices: Indices of cells in adata to use. If `None`, all cells are used.
-
         give_mean: Give mean of distribution or sample from it.
-
         batch_size: Mini-batch size for data loading into model. Defaults to `scvi.settings.batch_size`.
-
         Returns
         -------
-            A numpy array with shape `(n_cells, n_latent)`.
+            A tuple of ndarrays of background latent factors and treatment effect latent factors with
+            shape `(n_cells, n_latent)`.
         """
 
         if source_condition == target_condition:
             raise ValueError(f"source condition and target condition should be different.")
 
         adata = self._validate_anndata(adata)
+
         data_loader = self._make_data_loader(
             adata=adata,
             indices=indices,
@@ -287,78 +287,90 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
         latent_bg = []
         latent_t = []
 
+        control_label_idx = self.module.condition2int[self.module.control]
+
+        label_to_name = _invert_dict(self.module.condition2int)
+
+        source_label_idx = self.module.condition2int[source_condition]
+        target_label_idx = self.module.condition2int[target_condition]
+
         for tensors in data_loader:
-            x = tensors[REGISTRY_KEYS.X_KEY]
-            batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-            label_index = tensors[REGISTRY_KEYS.LABELS_KEY]
+            x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
+            batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
+            label_index = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
+
+            bg_holder = torch.zeros([x.shape[0], self.module.n_background_latent])
+            t_holder = torch.zeros([x.shape[0], self.module.n_salient_latent])
+
             unique_labels = label_index.unique()
 
-            latent_bg_tensor = torch.zeros([x.shape[0], self.module.n_background_latent])
-            latent_t_tensor = torch.zeros([x.shape[0], self.module.n_salient_latent])
+            for lbl in unique_labels:
+                mask = (label_index == lbl).squeeze().cpu()
+                x_sub = x[mask]
+                batch_sub = batch_index[mask]
 
-            for label in unique_labels:
-                mask = (label_index == label).squeeze().cpu()
-                x_label = x[mask]
-                batch_index_label = batch_index[mask]
-                condition_label_sub = label_index[mask]
-
-                if label.item() == self.module.control:  # assuming label 0 corresponds to 'control'
-                    src = 'control'
+                if lbl.item() == control_label_idx:
+                    # Use control_background_encoder for control data
                     outputs = self.module._generic_inference(
-                        x=x_label,
-                        batch_index=batch_index_label,
-                        src=src,
-                        condition_label=condition_label_sub
+                        x=x_sub, batch_index=batch_sub, src="control", condition_label=label_index[mask]
                     )
-                    z_bg_label = outputs['z_bg']
-                    latent_bg_tensor[mask] = outputs['qbg_m'].detach().cpu() if give_mean else z_bg_label.detach().cpu()
+                    z_bg_label = outputs["z_bg"]
+                    chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
+                    bg_holder[mask] = chosen_bg.detach().cpu()
 
-                    if condition2int[source_condition] == self.module.control:
-                        salient_encoder = self.module.treatment_salient_encoder[condition2int[target_condition] - 1]
-                        qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                        attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                        z_t_label = attention_weights * z_t_label
-                        latent_t_tensor[mask] = z_t_label
-
-                else:
-                    src = 'treatment'
-                    x_label_ = torch.log(x_label + 1)
-
-                    # Specify the treatment encoder for treatment data.
-                    # use (label - 1)-th encoder for treatment label since treatment encoder are labelled from 0
-                    # while treatment labels are labelled from 1 (label 0 implies control data)
-                    treat_index = int(label - 1)
-                    bg_encoder = self.module.treatment_background_encoder[treat_index]
-                    qbg_m_label, qbg_v_label, z_bg_label = bg_encoder(x_label_, batch_index_label)
-                    latent_bg_tensor[mask] = qbg_m_label.detach().cpu() if give_mean else z_bg_label.detach().cpu()
-
-                    if condition2int[source_condition] == label.item():
-                        # If target condition is control, then treatment effect embedding is zero
-                        # If not, then input the background embedding to corresponding treatment effect network of
-                        # target condition and generate counterfactual latent treatment effect embeddings
-                        if condition2int[target_condition] != self.module.control:
-                            salient_encoder = self.module.treatment_salient_encoder[condition2int[target_condition] - 1]
-                            qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                            attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                            z_t_label = attention_weights * z_t_label
-                            latent_t_tensor[mask] = qt_m_label.detach().cpu() if give_mean else z_t_label.detach().cpu()
+                    # If the source_condition is control, forcibly apply target_condition's salient
+                    if source_label_idx == control_label_idx:
+                        if target_label_idx != control_label_idx:
+                            # From control -> real treatment
+                            target_name = label_to_name.get(target_label_idx, None)
+                            if target_name is not None:
+                                s_enc = self.module.treatment_salient_encoders[target_name]
+                                tm, tv, zt = s_enc(z_bg_label)
+                                chosen_t = tm if give_mean else zt
+                                t_holder[mask] = chosen_t.detach().cpu()
+                            else:
+                                raise ValueError(f"Unknown treatment: {target_name}")
                         else:
-                            pass
+                            raise ValueError(f'target_condition should be different from source_condition.')
                     else:
-                        treat_index = int(label - 1)
-                        salient_encoder = self.module.treatment_salient_encoder[treat_index]
-                        qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                        # z_t_label = z_t_label*self.module.scaling_factor
-                        attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                        z_t_label = attention_weights * z_t_label
-                        latent_t_tensor[mask] = qt_m_label.detach().cpu() if give_mean else z_t_label.detach().cpu()
+                        # normal control => no salient
+                        pass
+                else:
+                    # Use corresponding treatment_background_encoder for each treated data
+                    tname = label_to_name.get(lbl.item(), None)
+                    if tname is None:
+                        raise ValueError(f"Unknown treatment: {tname} in model.")
+                    outputs = self.module._generic_inference(
+                        x=x_sub, batch_index=batch_sub, src="treatment", condition_label=label_index[mask]
+                    )
+                    z_bg_label = outputs["z_bg"]
+                    chosen_bg = outputs["qbg_m"] if give_mean else z_bg_label
+                    bg_holder[mask] = chosen_bg.detach().cpu()
 
-            latent_bg.append(latent_bg_tensor)
-            latent_t.append(latent_t_tensor)
+                    # If this batch label == source_condition, forcibly apply target's salient
+                    if lbl.item() == source_label_idx:
+                        if target_label_idx == control_label_idx:
+                            # From treat -> control => no salient
+                            pass
+                        else:
+                            target_name = label_to_name.get(target_label_idx, None)
+                            if target_name is not None:
+                                s_enc = self.module.treatment_salient_encoders[target_name]
+                                tm, tv, zt = s_enc(z_bg_label)
+                                chosen_t = tm if give_mean else zt
+                                t_holder[mask] = chosen_t.detach().cpu()
+                            else:
+                                raise ValueError(f"Unknown treatment: {target_name}")
+                    else:
+                        # Normal path => keep same treatment's treatment effect latent representation
+                        chosen_t = outputs["qt_m"] if give_mean else outputs["z_t"]
+                        t_holder[mask] = chosen_t.detach().cpu()
+
+            latent_bg.append(bg_holder)
+            latent_t.append(t_holder)
 
         latent_bg = torch.cat(latent_bg, dim=0).numpy()
         latent_t = torch.cat(latent_t, dim=0).numpy()
-
         return latent_bg, latent_t
 
     @torch.no_grad()
@@ -367,76 +379,84 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                              indices: Optional[Sequence[int]] = None,
                              target_batch: Optional[int] = None,
                              batch_size: Optional[int] = None,
-                             ):
+                             ) -> AnnData:
+        """
+        Predict count expression for input data with corresponding condition labels and provided target
+        batch labels (optional).
+        Args:
+            adata: AnnData to predict. If `None`, defaults to the AnnData object in model.
+            indices: Indices of cells in adata to use. If `None`, all cells are used.
+            target_batch: Target batch label. If `None`, defaults to the batch label in adata.
+            batch_size: Number of cells per mini-batch.
+
+        Returns:
+            AnnData object of count expression prediction.
+
+        """
+
         adata = self._validate_anndata(adata)
         data_loader = self._make_data_loader(
             adata=adata,
             indices=indices,
             batch_size=batch_size,
             shuffle=False,
-            data_loader_class=AnnDataLoader
+            data_loader_class=AnnDataLoader,
         )
 
         exprs = []
+        predicted_batch = []
+        control_label_idx = self.module.condition2int[self.module.control]
+
+        label_to_name = _invert_dict(self.module.condition2int)
+
         for tensors in data_loader:
-            x = tensors[REGISTRY_KEYS.X_KEY]
-            batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-            label_index = tensors[REGISTRY_KEYS.LABELS_KEY]
+            x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
+            batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
+            label_index = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
             unique_labels = label_index.unique()
 
             latent_bg_tensor = torch.zeros([x.shape[0], self.module.n_background_latent], device=self.module.device)
             latent_t_tensor = torch.zeros([x.shape[0], self.module.n_salient_latent], device=self.module.device)
             latent_library_tensor = torch.zeros([x.shape[0], 1], device=self.module.device)
 
-            # Compute expression for each condition (label)
-            # Ensure the output expression match the input cells by mask operation
-            for label in unique_labels:
-                mask = (label_index == label).squeeze().cpu()
-                x_label = x[mask]
-                batch_index_label = batch_index[mask]
-                condition_label_sub = label_index[mask]
+            for lbl in unique_labels:
+                mask = (label_index == lbl).squeeze()
+                x_sub = x[mask]
+                batch_sub = batch_index[mask]
 
-                if label.item() == self.module.control:
-                    src = 'control'
-                    infer_out = self.module._generic_inference(
-                        x=x_label,
-                        batch_index=batch_index_label,
-                        src=src,
-                        condition_label=condition_label_sub,
+                if lbl.item() == control_label_idx:
+                    # Compute prediction of control data
+                    outputs = self.module._generic_inference(
+                        x=x_sub,
+                        batch_index=batch_sub,
+                        src="control",
+                        condition_label=label_index[mask],
                     )
-                    latent_bg_tensor[mask] = infer_out['z_bg']
-                    latent_library_tensor[mask] = infer_out['library']
-
+                    latent_bg_tensor[mask] = outputs["z_bg"]
+                    latent_library_tensor[mask] = outputs["library"]
                 else:
-                    src = 'treatment'
-                    # The computation is the same as self.module._generic_inference function, but refactor it
-                    # for single treatment data instead of the list of all treatment data.
-                    x_label_ = torch.log(x_label + 1)
-                    treat_index = int(label - 1)
-                    bg_encoder = self.module.treatment_background_encoder[treat_index]
-                    salient_encoder = self.module.treatment_salient_encoder[treat_index]
-                    qbg_m_label, qbg_v_label, z_bg_label = bg_encoder(x_label_, batch_index_label)
-                    qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                    attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                    z_t_label = attention_weights * z_t_label
-                    # z_t_label = z_t_label*(torch.exp(self.module.log_scaling_factor)+1)
+                    # Compute prediction of treatment
+                    treat_name = label_to_name.get(lbl.item(), None)
+                    if treat_name is None:
+                        raise ValueError(f"Unknown treatment: {treat_name} in model.")
+                    outputs = self.module._generic_inference(
+                        x=x_sub,
+                        batch_index=batch_sub,
+                        src="treatment",
+                        condition_label=label_index[mask],
+                    )
+                    latent_bg_tensor[mask] = outputs["z_bg"]
+                    latent_t_tensor[mask] = outputs["z_t"]
+                    latent_library_tensor[mask] = outputs["library"]
 
-                    # Compute latent variable for library size
-                    if self.module.use_observed_lib_size:
-                        library_label = torch.log(x_label.sum(1).unsqueeze(1))
-                    else:
-                        ql_m_label, ql_v_label, library_label = self.module.l_encoder(x_label_, batch_index_label)
-
-                    latent_bg_tensor[mask] = z_bg_label
-                    latent_t_tensor[mask] = z_t_label
-                    latent_library_tensor[mask] = library_label
-
-            # Generate expression data
+            # Merge background & salient
             latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
+                # Prediction under the same batch
                 target_batch_index = batch_index
             else:
+                # Prediction under target batch
                 target_batch_index = torch.full_like(batch_index, fill_value=target_batch)
 
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
@@ -451,170 +471,187 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             count_tensor = ZeroInflatedNegativeBinomial(
                 mu=px_rate_tensor,
                 theta=px_r_tensor,
-                zi_logits=px_dropout_tensor
+                zi_logits=px_dropout_tensor,
             ).sample()
+
             exprs.append(count_tensor.detach().cpu())
+            predicted_batch.append(target_batch_index.detach().cpu())
 
         expression = torch.cat(exprs, dim=0).numpy()
-        return expression
+        predicted_batch_all = torch.cat(predicted_batch, dim=0).numpy()
+        adata_out = AnnData(X=expression, obs=adata.obs.copy(), var=adata.var.copy())
+        adata_out.obs['predicted_batch'] = predicted_batch_all
+        return adata_out
 
     @torch.no_grad()
-    def get_count_expression_counterfactual(self,
-                                            condition2int,
-                                            source_condition,
-                                            target_condition,
-                                            target_batch: Optional[int] = None,
-                                            adata: Optional[AnnData] = None,
-                                            indices: Optional[List[int]] = None,
-                                            batch_size: Optional[int] = None,
-                                            ):
+    def get_count_expression_cross_condition(
+            self,
+            source_condition: str,
+            target_condition: str,
+            target_batch: Optional[int] = None,
+            adata: Optional[AnnData] = None,
+            indices: Optional[List[int]] = None,
+            batch_size: Optional[int] = None,
+    ):
+        """
+        Predict cross-condition count expression of target_condition for cells from source_condition.
+        Similar to get_count_expression, but forcibly uses the target_condition's
+        treatment effect encoder if the cell's label matches source_condition (cross-condition).
+
+        Args:
+            source_condition: Source condition name to select cells for cross-condition prediction.
+            target_condition: Target condition name to predict expression profile under the condition.
+            target_batch: Target batch index to predict expression profile under the batch. If `None`, defaults to keep
+            the same batch label in adata. of adata.
+            adata: AnnData to predict. If `None`, defaults to the AnnData object in model.
+            indices: Indices of cells in adata to use. If `None`, all cells are used.
+            batch_size: Number of cells per mini-batch.
+
+        Returns:
+        AnnData with predicted cross-condition count expression as well as metadata under targeted settings.
+        """
         if source_condition == target_condition:
-            raise ValueError(f"source condition and target condition should be different.")
+            raise ValueError("source condition and target condition should be different.")
 
         adata = self._validate_anndata(adata)
+
         data_loader = self._make_data_loader(
             adata=adata,
             indices=indices,
             batch_size=batch_size,
             shuffle=False,
-            data_loader_class=AnnDataLoader
+            data_loader_class=AnnDataLoader,
         )
 
         exprs = []
-        latent = []
-        px_rate = []
-        px_dropout = []
+        predicted_batch = []
+        predicted_labels = []
+
+        control_label_idx = self.module.condition2int[self.module.control]
+        source_label_idx = self.module.condition2int[source_condition]
+        target_label_idx = self.module.condition2int[target_condition]
+
+        label_to_name = _invert_dict(self.module.condition2int)
+
         for tensors in data_loader:
-            x = tensors["X"]
-            batch_index = tensors["batch"]
-            label_index = tensors["labels"]
+            x = tensors[SCCAUSALVI_REGISTRY_KEYS.X_KEY]
+            batch_index = tensors[SCCAUSALVI_REGISTRY_KEYS.BATCH_KEY]
+            label_index = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
             unique_labels = label_index.unique()
 
-            latent_bg_tensor = torch.zeros([x.shape[0], self.module.n_background_latent], device=self.module.device)
-            latent_t_tensor = torch.zeros([x.shape[0], self.module.n_salient_latent], device=self.module.device)
+            latent_bg_tensor = torch.zeros(
+                [x.shape[0], self.module.n_background_latent], device=self.module.device
+            )
+            latent_t_tensor = torch.zeros(
+                [x.shape[0], self.module.n_salient_latent], device=self.module.device
+            )
             latent_library_tensor = torch.zeros([x.shape[0], 1], device=self.module.device)
+            predicted_label = torch.zeros([x.shape[0], 1], device=self.module.device)
 
-            # Compute expression for each condition (label)
-            # Ensure the output expression match the input cells by mask operation
-            for label in unique_labels:
-                mask = (label_index == label).squeeze().cpu()
-                x_label = x[mask]
-                batch_index_label = batch_index[mask]
-                condition_label_sub = label_index[mask]
+            for lbl in unique_labels:
+                mask = (label_index == lbl).squeeze()
+                x_sub = x[mask]
+                batch_sub = batch_index[mask]
 
-                if label.item() == self.module.control:
-                    src = 'control'
-                    infer_out = self.module._generic_inference(
-                        x=x_label,
-                        batch_index=batch_index_label,
-                        src=src,
-                        condition_label=condition_label_sub,
+                if lbl.item() == control_label_idx:
+                    # Compute background latent factors for control data
+                    outputs = self.module._generic_inference(
+                        x=x_sub,
+                        batch_index=batch_sub,
+                        src="control",
+                        condition_label=label_index[mask],
                     )
-                    # latent_bg_tensor[mask] = infer_out['z_bg']
-                    latent_bg_tensor[mask] = infer_out['z_bg']
-                    latent_library_tensor[mask] = infer_out['library']
+                    latent_bg_tensor[mask] = outputs["z_bg"]
+                    latent_library_tensor[mask] = outputs["library"]
 
-                    # Check whether to predict counterfactual expression data for control data
-                    # if so, input the latent background embedding to corresponding treatment effect network of
-                    # target condition and generate counterfactual latent treatment effect embeddings
-                    if condition2int[source_condition] == self.module.control:
-                        salient_encoder = self.module.treatment_salient_encoder[condition2int[target_condition] - 1]
-                        # print(f"from {source_condition} to {target_condition}")
-                        # print(condition2int[target_condition] - 1)
-                        qt_m_label, qt_v_label, z_t_label = salient_encoder(infer_out['z_bg'])
-                        # qt_m_label, qt_v_label, z_t_label = salient_encoder(infer_out['qbg_m'])
-                        attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                        # tt1 = z_t_label.detach().cpu()
-                        # print(np.abs(tt1).max())
-                        # attention_weights = torch.softmax(self.module.attention(qt_m_label), dim=-1)
-                        z_t_label = attention_weights * z_t_label
-                        # z_t_label = attention_weights * qt_m_label
-                        latent_t_tensor[mask] = z_t_label
-
-                else:
-                    src = 'treatment'
-                    # The computation is the same as self.module._generic_inference function, but refactor it
-                    # for single treatment data instead of the list of all treatment data.
-                    x_label_ = torch.log(x_label + 1)
-                    treat_index = int(label - 1)
-                    bg_encoder = self.module.treatment_background_encoder[treat_index]
-                    qbg_m_label, qbg_v_label, z_bg_label = bg_encoder(x_label_, batch_index_label)
-                    latent_bg_tensor[mask] = z_bg_label
-                    # latent_bg_tensor[mask] = qbg_m_label
-
-                    if condition2int[source_condition] == label.item():
-                        # If target condition is control, then treatment effect embedding is zero
-                        # If not, then input the background embedding to corresponding treatment effect network of
-                        # target condition and generate counterfactual latent treatment effect embeddings
-                        if condition2int[target_condition] != self.module.control:
-                            # print(f"from {source_condition} to {target_condition}")
-                            salient_encoder = self.module.treatment_salient_encoder[condition2int[target_condition] - 1]
-                            qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                            # qt_m_label, qt_v_label, z_t_label = salient_encoder(qbg_m_label)
-                            attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                            # attention_weights = torch.softmax(self.module.attention(qt_m_label), dim=-1)
-                            z_t_label = attention_weights * z_t_label
-                            # z_t_label = attention_weights * qt_m_label
-                            latent_t_tensor[mask] = z_t_label
+                    # If source_condition is control => forcibly apply target's salient
+                    if source_label_idx == control_label_idx:
+                        if target_label_idx != control_label_idx:
+                            target_name = label_to_name.get(target_label_idx, None)
+                            if target_name is not None:
+                                tm, tv, zt = self.module.treatment_salient_encoders[target_name](
+                                    outputs["z_bg"]
+                                )
+                                attn = torch.softmax(self.module.attention(zt), dim=-1)
+                                zt = attn * zt
+                                latent_t_tensor[mask] = zt
+                                predicted_label[mask] = target_label_idx
+                            else:
+                                raise ValueError(f"Unknown treatment: {target_name}")
                         else:
-                            # if target condition is control, then resulting treatment effects are all 0,
-                            # no need to change corresponding latent_t_tensor
+                            raise ValueError(f"target condition should be different from source condition.")
+                    else:
+                        predicted_label[mask] = label_index[mask]  # Keep same condition label index
+                else:
+                    # Compute background latent factors for treated data
+                    tname = label_to_name.get(lbl.item(), None)
+                    if tname is None:
+                        raise ValueError(f"Unknown treatment: {tname} in model.")
+                    outputs = self.module._generic_inference(
+                        x=x_sub,
+                        batch_index=batch_sub,
+                        src="treatment",
+                        condition_label=label_index[mask],
+                    )
+                    latent_bg_tensor[mask] = outputs["z_bg"]
+
+                    # If this label == source_label_idx => forcibly apply target's salient
+                    if lbl.item() == source_label_idx:
+                        if target_label_idx == control_label_idx:
+                            # treat -> control => no salient
                             pass
+                        else:
+                            target_name = label_to_name.get(target_label_idx, None)
+                            if target_name is not None:
+                                tm, tv, zt = self.module.treatment_salient_encoders[target_name](
+                                    outputs["z_bg"]
+                                )
+                                attn = torch.softmax(self.module.attention(zt), dim=-1)
+                                zt = attn * zt
+                                latent_t_tensor[mask] = zt
+                        predicted_label[mask] = target_label_idx
                     else:
-                        treat_index = int(label - 1)
-                        salient_encoder = self.module.treatment_salient_encoder[treat_index]
-                        qt_m_label, qt_v_label, z_t_label = salient_encoder(z_bg_label)
-                        # qt_m_label, qt_v_label, z_t_label = salient_encoder(qbg_m_label)
-                        attention_weights = torch.softmax(self.module.attention(z_t_label), dim=-1)
-                        # attention_weights = torch.softmax(self.module.attention(qbg_m_label), dim=-1)
-                        z_t_label = attention_weights * z_t_label
-                        # z_t_label = attention_weights * qbg_m_label
-                        latent_t_tensor[mask] = z_t_label
+                        # Normal path => existing outputs
+                        latent_t_tensor[mask] = outputs["z_t"]
+                        predicted_label[mask] = label_index[mask]
 
-                    # Compute latent variable for library size
-                    if self.module.use_observed_lib_size:
-                        library_label = torch.log(x_label.sum(1).unsqueeze(1))
-                    else:
-                        ql_m_label, ql_v_label, library_label = self.module.l_encoder(x_label_, batch_index_label)
+                    latent_library_tensor[mask] = outputs["library"]
 
-                    latent_library_tensor[mask] = library_label
-
-            # Generate expression data
-            latent_tensor = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
+            # Now decode to expression
+            full_latent = torch.cat([latent_bg_tensor, latent_t_tensor], dim=-1)
 
             if target_batch is None:
                 target_batch_index = batch_index
             else:
+                if self.module.n_batch == 1:
+                    print('Only one batch found in adata. Predicting under the same batch. target_batch is ignored.')
                 target_batch_index = torch.full_like(batch_index, fill_value=target_batch)
 
             px_scale_tensor, px_r_tensor, px_rate_tensor, px_dropout_tensor = self.module.decoder(
                 self.module.dispersion,
-                latent_tensor,
+                full_latent,
                 latent_library_tensor,
                 target_batch_index,
             )
             if px_r_tensor is None:
                 px_r_tensor = torch.exp(self.module.px_r)
 
+            # Sample counts
             torch.manual_seed(0)
             count_tensor = ZeroInflatedNegativeBinomial(
-                mu=px_rate_tensor,
-                theta=px_r_tensor,
-                zi_logits=px_dropout_tensor
+                mu=px_rate_tensor, theta=px_r_tensor, zi_logits=px_dropout_tensor
             ).sample()
 
             exprs.append(count_tensor.detach().cpu())
-            latent.append(latent_tensor.detach().cpu())
-            px_rate.append(px_rate_tensor.detach().cpu())
-            px_dropout.append(px_dropout_tensor.detach().cpu())
+            predicted_labels.append(predicted_label.detach().cpu())
+            predicted_batch.append(target_batch_index.detach().cpu())
 
         expression = torch.cat(exprs, dim=0).numpy()
-        latent_bg_t = torch.cat(latent, dim=0).numpy()
-        px_rate = torch.cat(px_rate, dim=0).numpy()
-        px_r = px_r_tensor.detach().cpu().numpy()
-        px_dropout = torch.cat(px_dropout, dim=0).numpy()
+        predicted_condition = torch.cat(predicted_labels, dim=0).numpy()
+        predicted_condition_name = [label_to_name.get(int(c), None) for c in predicted_condition]
+        predicted_batch_all = torch.cat(predicted_batch, dim=0).numpy()
 
-        return expression, latent_bg_t, px_rate, px_r, px_dropout
-
-
-
+        adata_out = AnnData(X=expression, obs=adata.obs.copy(), var=adata.var.copy())
+        adata_out.obs['predicted_condition'] = predicted_condition_name
+        adata_out.obs['predicted_batch'] = predicted_batch_all
+        return adata_out

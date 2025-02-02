@@ -1,19 +1,18 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple, Dict
 import numpy as np
+import torch
 from scvi.train import TrainingPlan, TrainRunner
 from scCausalVI.data.dataloaders.data_splitting import scCausalVIDataSplitter
 
 
 class scCausalVITrainingMixin:
-    """General methods for contrastive learning."""
-
     def train(
             self,
             group_indices_list: List[np.array],
             max_epochs: Optional[int] = None,
             use_gpu: Optional[Union[str, int, bool]] = None,
             train_size: float = 0.9,
-            validation_size: Optional[float] = None,
+            validation_size: Optional[float] = 0.1,
             batch_size: int = 128,
             early_stopping: bool = False,
             plan_kwargs: Optional[dict] = None,
@@ -59,8 +58,9 @@ class scCausalVITrainingMixin:
             train_size=train_size,
             validation_size=validation_size,
             batch_size=batch_size,
-            use_gpu=use_gpu,
+            accelerator='cuda' if use_gpu else 'cpu',
         )
+
         training_plan = TrainingPlan(self.module, **plan_kwargs)
 
         es = "early_stopping"
@@ -72,7 +72,7 @@ class scCausalVITrainingMixin:
             training_plan=training_plan,
             data_splitter=data_splitter,
             max_epochs=max_epochs,
-            use_gpu=use_gpu,
+            accelerator="gpu" if use_gpu else "cpu",
             **trainer_kwargs,
         )
         return runner()
