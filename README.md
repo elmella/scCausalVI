@@ -6,6 +6,9 @@
 
 scCausalVI is a causality-aware generative model designed to disentangle inherent cellular heterogeneity from treatment effects in single-cell RNA sequencing data, particularly in case-control studies.
 
+![scCausalVI Overview](https://github.com/ShaokunAn/scCausalVI/blob/main/sketch/method%20overview.png)
+
+
 ## Introduction
 
 scCausalVI addresses a major analytical challenge in single-cell RNA sequencing: distinguishing inherent cellular variation from extrinsic cell-state-specific effects induced by external stimuli. The model:
