@@ -1,10 +1,11 @@
 # scCausalVI
 
-scCausalVI is a causality-aware generative model designed to disentangle inherent cellular heterogeneity from treatment effects in single-cell RNA sequencing data, particularly in case-control studies.
-
+----------------------------------------------------------------
 [![Documentation Status](https://readthedocs.org/projects/scvi-tools/badge/?version=stable)](https://sccausalvi.readthedocs.io/en/latest/)
 [![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi)](https://pepy.tech/projects/sccausalvi)
 [![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi/month)](https://pepy.tech/projects/sccausalvi)
+
+scCausalVI is a causality-aware generative model designed to disentangle inherent cellular heterogeneity from treatment effects in single-cell RNA sequencing data, particularly in case-control studies.
 
 ## Introduction
 
