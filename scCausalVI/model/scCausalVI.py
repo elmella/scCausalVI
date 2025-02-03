@@ -200,7 +200,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
 
             # Placeholders for this mini-batch
             bg_holder = torch.zeros([x.shape[0], self.module.n_background_latent])
-            t_holder = torch.zeros([x.shape[0], self.module.n_salient_latent])
+            t_holder = torch.zeros([x.shape[0], self.module.n_te_latent])
 
             unique_labels = label_index.unique()
 
@@ -304,7 +304,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             label_index = tensors[SCCAUSALVI_REGISTRY_KEYS.CONDITION_KEY]
 
             bg_holder = torch.zeros([x.shape[0], self.module.n_background_latent])
-            t_holder = torch.zeros([x.shape[0], self.module.n_salient_latent])
+            t_holder = torch.zeros([x.shape[0], self.module.n_te_latent])
 
             unique_labels = label_index.unique()
 
@@ -329,7 +329,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                             # From control -> real treatment
                             target_name = label_to_name.get(target_label_idx, None)
                             if target_name is not None:
-                                s_enc = self.module.treatment_salient_encoders[target_name]
+                                s_enc = self.module.treatment_te_encoders[target_name]
                                 tm, tv, zt = s_enc(z_bg_label)
                                 chosen_t = tm if give_mean else zt
                                 t_holder[mask] = chosen_t.detach().cpu()
@@ -361,7 +361,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                         else:
                             target_name = label_to_name.get(target_label_idx, None)
                             if target_name is not None:
-                                s_enc = self.module.treatment_salient_encoders[target_name]
+                                s_enc = self.module.treatment_te_encoders[target_name]
                                 tm, tv, zt = s_enc(z_bg_label)
                                 chosen_t = tm if give_mean else zt
                                 t_holder[mask] = chosen_t.detach().cpu()
@@ -424,7 +424,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             unique_labels = label_index.unique()
 
             latent_bg_tensor = torch.zeros([x.shape[0], self.module.n_background_latent], device=self.module.device)
-            latent_t_tensor = torch.zeros([x.shape[0], self.module.n_salient_latent], device=self.module.device)
+            latent_t_tensor = torch.zeros([x.shape[0], self.module.n_te_latent], device=self.module.device)
             latent_library_tensor = torch.zeros([x.shape[0], 1], device=self.module.device)
 
             for lbl in unique_labels:
@@ -553,7 +553,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                 [x.shape[0], self.module.n_background_latent], device=self.module.device
             )
             latent_t_tensor = torch.zeros(
-                [x.shape[0], self.module.n_salient_latent], device=self.module.device
+                [x.shape[0], self.module.n_te_latent], device=self.module.device
             )
             latent_library_tensor = torch.zeros([x.shape[0], 1], device=self.module.device)
             predicted_label = torch.zeros([x.shape[0], 1], device=self.module.device)
@@ -580,7 +580,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                         if target_label_idx != control_label_idx:
                             target_name = label_to_name.get(target_label_idx, None)
                             if target_name is not None:
-                                tm, tv, zt = self.module.treatment_salient_encoders[target_name](
+                                tm, tv, zt = self.module.treatment_te_encoders[target_name](
                                     outputs["z_bg"]
                                 )
                                 attn = torch.softmax(self.module.attention(zt), dim=-1)
@@ -615,7 +615,7 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
                         else:
                             target_name = label_to_name.get(target_label_idx, None)
                             if target_name is not None:
-                                tm, tv, zt = self.module.treatment_salient_encoders[target_name](
+                                tm, tv, zt = self.module.treatment_te_encoders[target_name](
                                     outputs["z_bg"]
                                 )
                                 attn = torch.softmax(self.module.attention(zt), dim=-1)
