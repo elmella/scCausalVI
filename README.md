@@ -1,6 +1,5 @@
 # scCausalVI
 
-----------------------------------------------------------------
 [![Documentation Status](https://readthedocs.org/projects/scvi-tools/badge/?version=stable)](https://sccausalvi.readthedocs.io/en/latest/)
 [![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi)](https://pepy.tech/projects/sccausalvi)
 [![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi/month)](https://pepy.tech/projects/sccausalvi)
