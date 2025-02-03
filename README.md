@@ -3,6 +3,8 @@
 scCausalVI is a causality-aware generative model designed to disentangle inherent cellular heterogeneity from treatment effects in single-cell RNA sequencing data, particularly in case-control studies.
 
 [![Documentation Status](https://readthedocs.org/projects/scvi-tools/badge/?version=stable)](https://sccausalvi.readthedocs.io/en/latest/)
+[![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi)](https://pepy.tech/projects/sccausalvi)
+[![PyPI Downloads](https://static.pepy.tech/badge/sccausalvi/month)](https://pepy.tech/projects/sccausalvi)
 
 ## Introduction
 
@@ -17,10 +19,10 @@ scCausalVI addresses a major analytical challenge in single-cell RNA sequencing:
 ### Key Features of scCausalVI
 
 - **Disentangled Representation Learning**: Separates inherent cellular states from treatment effects in interpretable latent spaces.
-- **Cell-state-specific Treatment Effects**: Models how baseline cellular states modulate responses to perturbations.
+- **Cell-state-specific Treatment Effects**: Explores cell-state-specific response patterns. 
 - **Cross-condition Prediction**: Enables in silico perturbation to predict cellular states under alternative conditions.
 - **Multi-batch Integration**: Simultaneously removes technical variations while preserving biological signals across multiple data sources.
-- **Treatment Response Analysis**: Identifies responsive cells and characterizes molecular signatures of treatment susceptibility.
+- **Treatment Response Analysis**: Identifies responsive/non-responsive cells, characterizes cellular susceptibility and resistance to identify molecular signatures.
 
 ## Installation
 There are several alternative options to install scCausalVI:
