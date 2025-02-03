@@ -20,12 +20,10 @@ scCausalVI addresses a major analytical challenge in single-cell RNA sequencing:
 - Identifies treatment-responsive populations and molecular signatures
 
 ### Key Features of scCausalVI
-
-- **Disentangled Representation Learning**: Separates inherent cellular states from treatment effects in interpretable latent spaces.
-- **Cell-state-specific Treatment Effects**: Explores cell-state-specific response patterns. 
-- **Cross-condition Prediction**: Enables in silico perturbation to predict cellular states under alternative conditions.
-- **Multi-batch Integration**: Simultaneously removes technical variations while preserving biological signals across multiple data sources.
-- **Treatment Response Analysis**: Identifies responsive/non-responsive cells, characterizes cellular susceptibility and resistance to identify molecular signatures.
+- Interpretable and disentangled latent representation
+- Data integration
+- In silico perturbation
+- Identification of treatment-responsive populations
 
 ## Installation
 There are several alternative options to install scCausalVI:
