@@ -34,10 +34,10 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
         adata: AnnData object with count data.
         condition2int: Dict mapping condition name (str) -> index (int)
         control: Control condition in case-control study, containing cells in unperturbed states
-        n_hidden: Number of hidden nodes in each layer of neural network.
         n_background_latent: Dimensionality of background latent space.
         n_te_latent: Dimensionality of treatment effect latent space.
         n_layers: Number of hidden layers of each sub-networks.
+        n_hidden: Number of hidden nodes in each layer of neural network.
         dropout_rate: Dropout rate for the network.
         use_observed_lib_size: Whether to use the observed library size.
         use_mmd: Whether to use Maximum Mean Discrepancy (MMD) to align background latent representations
@@ -52,15 +52,15 @@ class scCausalVIModel(scCausalVITrainingMixin, BaseModelClass):
             adata: AnnData,
             condition2int: dict,
             control: str,
-            n_hidden: int = 128,
             n_background_latent: int = 10,
             n_te_latent: int = 10,
             n_layers: int = 2,
+            n_hidden: int = 128,
             dropout_rate: float = 0.1,
             use_observed_lib_size: bool = True,
             use_mmd: bool = True,
             mmd_weight: float = 1.0,
-            norm_weight: float = 1.0,
+            norm_weight: float = 0.3,
             gammas: Optional[np.ndarray] = None,
     ) -> None:
 

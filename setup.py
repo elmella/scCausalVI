@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="scCausalVI",
-    version='0.0.4',
+    version='0.0.6',
     author="Shaokun An",
     author_email="shan12@bwh.harvard.edu",
     description="A deep causality-aware model for disentangling treatment effects at single-cell resolution "
@@ -29,7 +29,8 @@ setup(
         "seaborn>=0.12.2",
         "scipy>=1.11.3",
         "scvi-tools>=0.16.1",
-        "pytorch-lightning>=1.5.10"
+        "pytorch-lightning>=1.5.10",
+        "gdown>=5.2.0"
     ],
     python_requires=">=3.9",
 )
