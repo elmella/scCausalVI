@@ -1,12 +1,15 @@
 scCausalVI
 ======================================
-scCausalVI is a causality-aware model for analyzing single-cell RNA sequencing
-data, designed to disentangle treatment effects from intrinsic cellular heterogeneity.
-Using a deep generative framework, scCausalVI enables precise, single-cell-level inference
-of gene expression responses to experimental treatments by modeling the causal dependencies
-between treatment effects and cellular states. Key features include support for clustering,
-treatment response analysis, and counterfactual inference, allowing users to explore cellular
-variability and identify treatment-responsive subpopulations.
+scCausalVI is a causality-aware generative model for analyzing perturbational single-cell RNA sequencing data. The model addresses a fundamental challenge in single-cell analysis: disentangling intrinsic cellular heterogeneity from treatment-induced effects.
+By incorporating structural causal modeling with deep learning, scCausalVI:
+
+- Learns interpretable latent representations that separate baseline cellular states from treatment effects
+- Models cell-state-specific responses through adaptive scaling mechanisms
+- Enables in silico prediction of cellular states under alternative experimental conditions
+- Integrates multi-source data while distinguishing technical variations from biological signals
+- Identifies treatment-responsive populations and characterizes molecular signatures of susceptibility
+
+The framework supports comprehensive downstream analyses, including clustering, differential expression, and cross-condition prediction, providing researchers with tools to investigate cellular heterogeneity and treatment responses at single-cell resolution.
 
 .. image:: _static/overview.png
    :alt: Overview
