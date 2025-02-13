@@ -817,17 +817,17 @@ class scCausalVIModule(BaseModuleClass):
         generative_outputs = self.generative(**generative_inputs)
         return inference_outputs, generative_outputs
 
-    @torch.jit.script
+    # @torch.jit.script
     def _compute_mmd_loss(self, z_bg_control: torch.Tensor, z_bg_treatment_all: torch.Tensor, cond_treat: torch.Tensor) -> torch.Tensor:
         loss_mmd = torch.tensor(0.0, device=z_bg_control.device)
-        unique_treats = cond_treat.unique()
+        unique_treats = torch.unique(cond_treat)
         for t_lbl in unique_treats:
             treat_submask = (cond_treat == t_lbl).squeeze()
             z_bg_t_sub = z_bg_treatment_all[treat_submask]
             loss_mmd += self.mmd_loss(z_bg_control, z_bg_t_sub)
         return loss_mmd * self.mmd_weight
 
-    @torch.jit.script
+    # @torch.jit.script
     def _compute_norm_loss(self, z_t_trt: torch.Tensor) -> torch.Tensor:
         norm_val = (z_t_trt ** 2).sum(dim=1)
         return self.norm_weight * norm_val
