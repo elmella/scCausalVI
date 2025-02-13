@@ -153,8 +153,8 @@ class scCausalVITrainingMixin:
             early_stopping if "early_stopping" not in trainer_kwargs else trainer_kwargs["early_stopping"]
         )
         # Enable mixed-precision if using the GPU.
-        if use_gpu:
-            trainer_kwargs["use_amp"] = True
+        # if use_gpu:
+        #     trainer_kwargs["use_amp"] = True
 
         runner = TrainRunner(
             self,
